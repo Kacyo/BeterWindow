@@ -2,6 +2,8 @@
 
 #include <vector>
 
+using namespace bwui;
+
 const TintPreset kTints[] = {
     {L"午夜黑", 0x0B0B0F},
     {L"石墨灰", 0x1B1C22},

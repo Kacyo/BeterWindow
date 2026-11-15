@@ -1,9 +1,10 @@
 #pragma once
 
+#include "beterwindow/ui/BeterWindowUI.h"
+
 #include "common.h"
 #include "config.h"
 #include "effects.h"
-#include "painter.h"
 #include "winenum.h"
 
 constexpr float kTitleBarHeight = 52.f;
@@ -48,20 +49,8 @@ enum class Kind : int {
     RemoveInclude,
 };
 
-struct Hit {
-    uint64_t id = 0;
-    D2D1_RECT_F rect{};
-    Kind kind = Kind::None;
-    int arg = 0;
-    bool enabled = true;
-};
-
-enum class BtnStyle {
-    Primary,
-    Secondary,
-    Subtle,
-    Danger,
-};
+using UiHit = bwui::Hit<Kind>;
+using BtnStyle = bwui::ButtonStyle;
 
 class App {
 public:
@@ -126,14 +115,14 @@ private:
                     int maxValue, bool enabled);
     void AddHit(uint64_t id, Kind kind, int arg, const D2D1_RECT_F& rect, bool enabled = true);
     bool Hot(uint64_t id) const { return hot_ == id; }
-    const Hit* HitAt(float x, float y) const;
+    const UiHit* HitAt(float x, float y) const;
     float Anim(uint64_t id, bool on);
     void UpdateSliderDrag(float x);
 
     // 状态
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
-    Painter painter_;
+    bwui::Painter painter_;
     IconCache icons_;
     EffectManager effects_;
     AppConfig cfg_;
@@ -161,11 +150,8 @@ private:
     uint64_t active_ = 0;
     Kind activeKind_ = Kind::None;
 
-    std::vector<Hit> hits_;
-    std::vector<Hit> lastHits_;
-
-    std::unordered_map<uint64_t, float> anim_;
-    bool animating_ = false;
+    bwui::HitRegistry<Kind> hits_;
+    bwui::Animator animator_;
 
     std::wstring status_ = L"就绪";
     int tick_ = 0;

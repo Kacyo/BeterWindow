@@ -2,6 +2,8 @@
 
 #include <cstdlib>
 
+using namespace bwui;
+
 namespace {
 
 App* g_app = nullptr;
@@ -18,23 +20,11 @@ bool g_trayAdded = false;
 bool g_reallyExit = false;
 UINT g_taskbarCreated = 0;
 
-float DpiScaleOf(HWND hwnd) {
-    typedef UINT(WINAPI * GetDpiForWindowFn)(HWND);
-    static GetDpiForWindowFn fn =
-        (GetDpiForWindowFn)GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow");
-    UINT dpi = fn ? fn(hwnd) : 96;
-    if (dpi == 0) dpi = 96;
-    return (float)dpi / 96.f;
-}
+// 无边框窗口参数（尺寸与 BeterWindow 的标题栏/按钮布局一致）
+FramelessOptions g_frame;
 
-float SystemDpiScale() {
-    typedef UINT(WINAPI * GetDpiForSystemFn)();
-    static GetDpiForSystemFn fn =
-        (GetDpiForSystemFn)GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem");
-    UINT dpi = fn ? fn() : 96;
-    if (dpi == 0) dpi = 96;
-    return (float)dpi / 96.f;
-}
+using bwui::DpiScaleOf;
+using bwui::SystemDpiScale;
 
 float RoundRectCoverage(float x, float y, float cx, float cy, float hx, float hy, float r) {
     float qx = std::fabs(x - cx) - (hx - r);
@@ -190,59 +180,16 @@ void ShowTrayMenu(HWND hwnd) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     App* app = (App*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
 
+    LRESULT frameResult = 0;
+    if (HandleFramelessMessage(hwnd, msg, wParam, lParam, g_frame, frameResult)) {
+        return frameResult;
+    }
+
     switch (msg) {
         case WM_NCCREATE: {
             auto* cs = (CREATESTRUCTW*)lParam;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
             return TRUE;
-        }
-        case WM_NCCALCSIZE:
-            if (wParam) return 0;
-            // wParam == FALSE：直接把客户区扩展为整个窗口，避免残留系统边框
-            GetWindowRect(hwnd, (RECT*)lParam);
-            return 0;
-        case WM_NCHITTEST: {
-            POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-            ScreenToClient(hwnd, &pt);
-            RECT rc{};
-            GetClientRect(hwnd, &rc);
-            const float s = DpiScaleOf(hwnd);
-            const int border = (int)(7.f * s);
-            const bool maximized = IsZoomed(hwnd) != 0;
-
-            if (!maximized) {
-                bool left = pt.x < border;
-                bool right = pt.x >= rc.right - border;
-                bool top = pt.y < border;
-                bool bottom = pt.y >= rc.bottom - border;
-                if (top && left) return HTTOPLEFT;
-                if (top && right) return HTTOPRIGHT;
-                if (bottom && left) return HTBOTTOMLEFT;
-                if (bottom && right) return HTBOTTOMRIGHT;
-                if (left) return HTLEFT;
-                if (right) return HTRIGHT;
-                if (top) return HTTOP;
-                if (bottom) return HTBOTTOM;
-            }
-
-            int titleH = (int)(kTitleBarHeight * s);
-            int buttonsW = (int)((46.f * 3.f + 8.f) * s);
-            if (pt.y < titleH && pt.x < rc.right - buttonsW) return HTCAPTION;
-            return HTCLIENT;
-        }
-        case WM_GETMINMAXINFO: {
-            auto* mmi = (MINMAXINFO*)lParam;
-            MONITORINFO mi{sizeof(mi)};
-            if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
-                mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
-                mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
-                mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
-                mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
-            }
-            const float s = DpiScaleOf(hwnd);
-            mmi->ptMinTrackSize.x = (LONG)(900.f * s);
-            mmi->ptMinTrackSize.y = (LONG)(600.f * s);
-            return 0;
         }
         case WM_NCACTIVATE:
             return TRUE;

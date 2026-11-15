@@ -1,4 +1,6 @@
-#include "painter.h"
+#include "beterwindow/ui/painter.h"
+
+namespace bwui {
 
 namespace {
 
@@ -361,3 +363,5 @@ float Painter::MeasureWidth(const std::wstring& text, FontRole role) {
     if (FAILED(layout->GetMetrics(&metrics))) return 0.f;
     return metrics.width;
 }
+
+}  // namespace bwui

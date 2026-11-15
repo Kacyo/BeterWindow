@@ -1,7 +1,11 @@
 #pragma once
 
-#include "common.h"
+#include "core.h"
+#include "export.h"
 
+namespace bwui {
+
+// 字体角色，Painter 内部据此选择字体族、字号与字重。
 enum class FontRole {
     Brand = 0,
     H1,
@@ -15,7 +19,9 @@ enum class FontRole {
     Mono,
 };
 
-class Painter {
+// Direct2D / DirectWrite 绘制封装，供自绘窗口使用。
+// 所有坐标单位为 DIP；Init 后需在每次 Begin/End 之间绘制。
+class BWUI_API Painter {
 public:
     bool Init(HWND hwnd);
     void Release();
@@ -68,3 +74,5 @@ private:
     std::unordered_map<uint32_t, ID2D1SolidColorBrush*> brushes_;
     std::unordered_map<int, IDWriteTextFormat*> formats_;
 };
+
+}  // namespace bwui

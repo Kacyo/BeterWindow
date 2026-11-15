@@ -1,5 +1,7 @@
 #include "config.h"
 
+using namespace bwui;
+
 namespace {
 
 std::wstring JoinList(const std::vector<std::wstring>& items) {

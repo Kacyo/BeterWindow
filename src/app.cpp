@@ -1,24 +1,27 @@
-﻿#include "app.h"
+#include "app.h"
 
 #include <d2d1helper.h>
 
+using namespace bwui;
+
 namespace {
 
-// ---- 调色板 ----
-const D2D1_COLOR_F cWindow = Rgb(0x0F1013);
-const D2D1_COLOR_F cSidebar = Rgb(0x14151A);
-const D2D1_COLOR_F cCard = Rgb(0x17181D);
-const D2D1_COLOR_F cCardDeep = Rgb(0x131419);
-const D2D1_COLOR_F cHover = Rgb(0x1D1E25);
-const D2D1_COLOR_F cBorder = Rgb(0x24252C);
-const D2D1_COLOR_F cBorderHi = Rgb(0x30323B);
-const D2D1_COLOR_F cText = Rgb(0xECEDF2);
-const D2D1_COLOR_F cSub = Rgb(0x9A9BA5);
-const D2D1_COLOR_F cMuted = Rgb(0x62646E);
-const D2D1_COLOR_F cAccent = Rgb(0x7C6CFF);
-const D2D1_COLOR_F cAccent2 = Rgb(0x4F8CFF);
-const D2D1_COLOR_F cOk = Rgb(0x4ADE80);
-const D2D1_COLOR_F cDanger = Rgb(0xF87171);
+// ---- 调色板（来自 BeterWindowUI 主题） ----
+const Theme kTheme = Theme::Dark();
+const D2D1_COLOR_F cWindow = kTheme.window;
+const D2D1_COLOR_F cSidebar = kTheme.sidebar;
+const D2D1_COLOR_F cCard = kTheme.card;
+const D2D1_COLOR_F cCardDeep = kTheme.cardDeep;
+const D2D1_COLOR_F cHover = kTheme.hover;
+const D2D1_COLOR_F cBorder = kTheme.border;
+const D2D1_COLOR_F cBorderHi = kTheme.borderHi;
+const D2D1_COLOR_F cText = kTheme.text;
+const D2D1_COLOR_F cSub = kTheme.sub;
+const D2D1_COLOR_F cMuted = kTheme.muted;
+const D2D1_COLOR_F cAccent = kTheme.accent;
+const D2D1_COLOR_F cAccent2 = kTheme.accent2;
+const D2D1_COLOR_F cOk = kTheme.ok;
+const D2D1_COLOR_F cDanger = kTheme.danger;
 
 const wchar_t* const kCornerLabels[] = {L"系统默认", L"无效果", L"小圆角", L"大圆角"};
 const wchar_t* const kGlassLabels[] = {L"关闭", L"模糊", L"亚克力", L"Mica"};
@@ -35,6 +38,10 @@ uint64_t H(const char* s) {
 
 uint64_t RowId(HWND hwnd) {
     return H("row") ^ (uint64_t)(uintptr_t)hwnd;
+}
+
+uint64_t SegmentId(uint64_t id, int index) {
+    return id ^ ((uint64_t)(index + 1) * 0x9E3779B97F4A7C15ull);
 }
 
 }  // namespace
@@ -106,7 +113,7 @@ void App::Paint() {
 
     bool ok = painter_.Begin();
     if (ok) {
-        hits_.clear();
+        hits_.Clear();
         D2D1_SIZE_F size = painter_.rt()->GetSize();
         DrawChrome(size.width, size.height);
 
@@ -137,7 +144,7 @@ void App::Paint() {
             icons_.InvalidateBitmaps();
             ok = false;
         }
-        lastHits_.swap(hits_);
+        hits_.Commit();
         if (!ok) Invalidate();
     }
 
@@ -261,27 +268,12 @@ void App::Save() {
 // 输入
 // ============================================================
 
-const Hit* App::HitAt(float x, float y) const {
-    for (auto it = lastHits_.rbegin(); it != lastHits_.rend(); ++it) {
-        if (it->enabled && PointIn(it->rect, x, y)) return &(*it);
-    }
-    return nullptr;
+const UiHit* App::HitAt(float x, float y) const {
+    return hits_.HitAt(x, y);
 }
 
 float App::Anim(uint64_t id, bool on) {
-    float target = on ? 1.f : 0.f;
-    auto it = anim_.find(id);
-    if (it == anim_.end()) {
-        anim_[id] = target;
-        return target;
-    }
-    float& v = it->second;
-    if (std::fabs(v - target) > 0.002f) {
-        v += (target - v) * 0.32f;
-        if (std::fabs(v - target) <= 0.002f) v = target;
-        animating_ = true;
-    }
-    return v;
+    return animator_.Step(id, on);
 }
 
 void App::UpdateSliderDrag(float x) {
@@ -311,7 +303,7 @@ void App::MouseMove(int px, int py) {
         return;
     }
 
-    const Hit* hit = HitAt(x, y);
+    const UiHit* hit = HitAt(x, y);
     uint64_t newHot = (hit && hit->enabled) ? hit->id : 0;
     if (newHot != hot_) {
         hot_ = newHot;
@@ -329,7 +321,7 @@ void App::MouseLeave() {
 void App::LButtonDown(int px, int py) {
     float x = px / dpiScale_;
     float y = py / dpiScale_;
-    const Hit* hit = HitAt(x, y);
+    const UiHit* hit = HitAt(x, y);
     if (!hit || !hit->enabled) {
         if (searchFocused_) {
             searchFocused_ = false;
@@ -360,7 +352,7 @@ void App::LButtonUp(int px, int py) {
 
     if (pressed == 0) return;
 
-    const Hit* hit = HitAt(x, y);
+    const UiHit* hit = HitAt(x, y);
     if (!hit || hit->id != pressed || !hit->enabled) {
         Invalidate();
         return;
@@ -558,10 +550,7 @@ void App::OnTimer() {
         need = true;
     }
 
-    if (animating_) {
-        animating_ = false;
-        need = true;
-    }
+    if (animator_.ConsumeAnimating()) need = true;
 
     if (need) Invalidate();
 }
@@ -571,135 +560,47 @@ void App::OnTimer() {
 // ============================================================
 
 void App::AddHit(uint64_t id, Kind kind, int arg, const D2D1_RECT_F& rect, bool enabled) {
-    Hit h;
-    h.id = id;
-    h.kind = kind;
-    h.arg = arg;
-    h.rect = rect;
-    h.enabled = enabled;
-    hits_.push_back(h);
+    hits_.Add(id, kind, arg, rect, enabled);
 }
 
 void App::Card(const D2D1_RECT_F& rect) {
-    painter_.FillRound(rect, 12.f, cCard);
-    painter_.StrokeRound(rect, 12.f, cBorder);
+    DrawCard(painter_, kTheme, rect);
 }
 
 void App::DrawButton(uint64_t id, Kind kind, int arg, const D2D1_RECT_F& rect,
                      const wchar_t* label, BtnStyle style, bool enabled, const wchar_t* icon) {
-    bool hot = Hot(id) && enabled;
-    D2D1_COLOR_F textColor = cText;
-
-    if (style == BtnStyle::Primary) {
-        D2D1_COLOR_F from = enabled ? (hot ? Rgb(0x9083FF) : Rgb(0x8A7BFF)) : Rgb(0x2A2A33);
-        D2D1_COLOR_F to = enabled ? (hot ? Rgb(0x6E9DFF) : Rgb(0x5F93FF)) : Rgb(0x26262E);
-        painter_.FillRoundGrad(rect, 9.f, from, to, false);
-        textColor = enabled ? Rgb(0xFFFFFF) : cMuted;
-    } else if (style == BtnStyle::Danger) {
-        painter_.FillRound(rect, 9.f, hot ? Rgb(0x3A1E22) : Rgb(0x1E1B20));
-        painter_.StrokeRound(rect, 9.f, hot ? Rgb(0x7A3A42) : cBorder);
-        textColor = enabled ? (hot ? Rgb(0xFF9AA1) : Rgb(0xE9A0A6)) : cMuted;
-    } else if (style == BtnStyle::Subtle) {
-        painter_.FillRound(rect, 9.f, hot ? cHover : D2D1::ColorF(0, 0, 0, 0));
-        painter_.StrokeRound(rect, 9.f, hot ? cBorderHi : cBorder);
-        textColor = enabled ? (hot ? cText : cSub) : cMuted;
-    } else {
-        painter_.FillRound(rect, 9.f, hot ? Rgb(0x23242C) : Rgb(0x1B1C22));
-        painter_.StrokeRound(rect, 9.f, hot ? cBorderHi : cBorder);
-        textColor = enabled ? (hot ? cText : cSub) : cMuted;
-    }
-
-    if (icon) {
-        float tw = painter_.MeasureWidth(label, FontRole::Strong);
-        float total = 18.f + 7.f + tw;
-        float sx = rect.left + ((rect.right - rect.left) - total) * 0.5f;
-        painter_.Text(RectF(sx, rect.top, sx + 18.f, rect.bottom), icon, FontRole::Icon,
-                      textColor, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-                      false);
-        painter_.Text(RectF(sx + 25.f, rect.top, rect.right, rect.bottom), label,
-                      FontRole::Strong, textColor, DWRITE_TEXT_ALIGNMENT_LEADING,
-                      DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
-    } else {
-        painter_.Text(rect, label, FontRole::Strong, textColor,
-                      DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
-    }
-
+    bwui::DrawButton(painter_, kTheme, rect, label, style, Hot(id) && enabled, enabled, icon);
     AddHit(id, kind, arg, rect, enabled);
 }
 
 void App::DrawIconButton(uint64_t id, Kind kind, const D2D1_RECT_F& rect,
                          const wchar_t* glyph) {
-    bool hot = Hot(id);
-    painter_.FillRound(rect, 9.f, hot ? cHover : Rgb(0x1A1B21));
-    painter_.StrokeRound(rect, 9.f, hot ? cBorderHi : cBorder);
-    painter_.Text(rect, glyph, FontRole::Icon, hot ? cText : cSub,
-                  DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    bwui::DrawIconButton(painter_, kTheme, rect, glyph, Hot(id));
     AddHit(id, kind, 0, rect);
 }
 
 void App::DrawToggle(uint64_t id, Kind kind, const D2D1_RECT_F& rect, bool on, bool enabled) {
-    float t = Anim(id, on && enabled);
-    float cy = (rect.top + rect.bottom) * 0.5f;
-    float radius = (rect.bottom - rect.top) * 0.5f;
-    float knobR = radius - 3.5f;
-
-    D2D1_COLOR_F track = MixColor(Rgb(0x2E3039), cAccent, t);
-    if (!enabled) track = Rgb(0x23242B);
-    painter_.FillRound(rect, radius, track);
-
-    float x0 = rect.left + 3.5f + knobR;
-    float x1 = rect.right - 3.5f - knobR;
-    float cx = x0 + (x1 - x0) * t;
-    painter_.FillCircle(cx, cy, knobR, enabled ? Rgb(0xFFFFFF) : Rgb(0x6A6B75));
-
+    bwui::DrawToggle(painter_, kTheme, rect, Anim(id, on && enabled), enabled);
     AddHit(id, kind, 0, rect, enabled);
 }
 
 void App::DrawSegmented(uint64_t id, Kind kind, const D2D1_RECT_F& rect,
                         const wchar_t* const* labels, int count, int selected, bool enabled) {
-    painter_.FillRound(rect, 10.f, cCardDeep);
-    painter_.StrokeRound(rect, 10.f, cBorder);
+    bool hotCells[8]{};
+    for (int i = 0; i < count && i < 8; ++i) {
+        hotCells[i] = Hot(SegmentId(id, i)) && enabled;
+    }
+    bwui::DrawSegmented(painter_, kTheme, rect, labels, count, selected, hotCells, enabled);
 
-    float cellW = (rect.right - rect.left) / (float)count;
     for (int i = 0; i < count; ++i) {
-        uint64_t cid = id ^ ((uint64_t)(i + 1) * 0x9E3779B97F4A7C15ull);
-        D2D1_RECT_F cell = RectF(rect.left + cellW * i, rect.top, rect.left + cellW * (i + 1),
-                                 rect.bottom);
-        D2D1_RECT_F inner = ShrinkRect(cell, 3.f, 3.f);
-        bool hot = Hot(cid) && enabled;
-
-        if (i == selected) {
-            painter_.FillRound(inner, 7.f, WithAlpha(cAccent, enabled ? 0.20f : 0.10f));
-            painter_.StrokeRound(inner, 7.f, WithAlpha(cAccent, enabled ? 0.55f : 0.22f));
-        } else if (hot) {
-            painter_.FillRound(inner, 7.f, Rgb(0x1C1D24));
-        }
-
-        D2D1_COLOR_F color = (i == selected) ? (enabled ? cText : cMuted)
-                                             : (hot ? cText : cSub);
-        painter_.Text(cell, labels[i], FontRole::Body, color, DWRITE_TEXT_ALIGNMENT_CENTER,
-                      DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
-
-        AddHit(cid, kind, i, cell, enabled);
+        AddHit(SegmentId(id, i), kind, i, SegmentedCellRect(rect, count, i), enabled);
     }
 }
 
 void App::DrawSlider(uint64_t id, Kind kind, const D2D1_RECT_F& rect, int value, int minValue,
                      int maxValue, bool enabled) {
-    float cy = (rect.top + rect.bottom) * 0.5f;
-    float t = (maxValue > minValue) ? (float)(value - minValue) / (float)(maxValue - minValue) : 0.f;
-    t = Clampf(t, 0.f, 1.f);
-    float x = rect.left + (rect.right - rect.left) * t;
-
-    painter_.FillRound(RectF(rect.left, cy - 2.f, rect.right, cy + 2.f), 2.f, Rgb(0x2B2C35));
-    painter_.FillRound(RectF(rect.left, cy - 2.f, x, cy + 2.f), 2.f,
-                       enabled ? cAccent : Rgb(0x3C3D47));
-
-    bool hot = Hot(id) && enabled;
-    float knobR = (hot || active_ == id) ? 7.5f : 7.f;
-    painter_.FillCircle(x, cy, knobR, enabled ? Rgb(0xFFFFFF) : Rgb(0x6A6B75));
-    painter_.FillCircle(x, cy, 3.2f, enabled ? cAccent : Rgb(0x3C3D47));
-
+    bwui::DrawSlider(painter_, kTheme, rect, value, minValue, maxValue, Hot(id) && enabled,
+                     active_ == id, enabled);
     AddHit(id, kind, 0, ShrinkRect(rect, 0.f, -7.f), enabled);
 }
 
